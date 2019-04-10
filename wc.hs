@@ -1,3 +1,6 @@
+{-# LANGUAGE BangPatterns      #-}
+{-# LANGUAGE OverloadedStrings #-}
+
 module Main where
 
 -- wc, word count
@@ -6,74 +9,53 @@ module Main where
 --  -w words
 --  -c chars
 
-import           Data.Maybe         (fromMaybe)
-import           System.Directory   (doesFileExist)
-import           System.Environment (getArgs)
-import           System.Exit        (die)
+import qualified Data.ByteString      as S
+import qualified Data.ByteString.Lazy as L
+import           Data.Maybe           (fromMaybe)
+import           GHC.Word
+import           System.Directory     (doesFileExist)
+import           System.Environment   (getArgs)
+import           System.Exit          (die)
 
-data Flag = Lines
-          | Words
-          | Chars
-          deriving (Show)
+big = "/mnt/wss/home/working/data/generated/k.data"
+medium = "/mnt/wss/home/working/data/generated/d.data"
+small = "/mnt/wss/home/working/data/generated/a.data"
 
+data Count = Count {
+    _chars :: !Int,
+    _words :: !Int,
+    _lines :: !Int
+    }
+    deriving (Show)
 
-nlines :: String -> String
-nlines c = show $ length (lines c)
+wc :: FilePath -> IO Count
+wc path = collect path >>= pure . (counter $ Count 0 0 0)
 
-nchars :: String -> String
-nchars c = show $ length c
+foo :: L.ByteString -> Count
+foo cs = L.foldlChunks count base cs
+    where
+        base = Count 0 0 0
+        count (Count c w l) xs = Count (c + 1) w (l + c_lines)
+            where
+                !c_lines = S.count 10 xs
 
-nwords :: String -> String
-nwords c = show $ length $ words c
+lazyWords :: L.ByteString -> [L.ByteString]
+lazyWords xs = case L.dropWhile isSpace xs of
+                   "" -> []
+    where
+        isSpace 10 = True
+        isSpace 32 = True
+        isSpace _  = False
 
+collect :: FilePath -> IO [GHC.Word.Word8]
+collect path = L.readFile path >>= pure . L.unpack
 
-wc :: [Flag] -> String -> String
-wc flags content
-      | null flags = out content [Lines, Words, Chars]
-      | otherwise  = out content flags
-  where
-      out :: String -> [Flag] -> String
-      out c (Lines : fs) = nlines c ++ " " ++ out c fs
-      out c (Words : fs) = nwords c ++ " " ++ out c fs
-      out c (Chars : fs) = nchars c ++ " " ++ out c fs
-      out _ []           = []
-
-
-help :: IO ()
-help = do
-      putStrLn "usage: wc [option]"
-      putStrLn ""
-      putStrLn "  -l  lines"
-      putStrLn "  -w  words"
-      putStrLn "  -c  characters"
-
-
-handle :: [Flag] -> [String] -> Maybe String -> IO ()
-handle flags arguments content =
-      case arguments of
-        ("-h" : _   ) -> help
-        ("-l" : args) -> handle (Lines:flags) args content
-        ("-w" : args) -> handle (Words:flags) args content
-        ("-c" : args) -> handle (Chars:flags) args content
-
-        (file : args) -> do
-          exists <- doesFileExist file
-          if exists
-            then do
-              fileContent <- readFile file
-              handle flags args $ Just (fileContent ++ fromMaybe "" content)
-
-            else die $
-              "wc: " ++ file ++ ": No such file or directory"
-
-        [] -> output content
-  where
-      output :: Maybe String -> IO ()
-      output Nothing  = getContents >>= putStrLn . wc flags
-      output (Just c) = putStrLn $ wc flags c
-
+counter :: Count -> [GHC.Word.Word8] -> Count
+counter count []                  = count
+counter (!Count c w l) (10:xs)    = counter (Count (c + 1) w (l + 1)) xs
+counter (!Count c w l) (32:32:xs) = counter (Count (c + 1) w l) xs
+counter (!Count c w l) (32:xs)    = counter (Count (c + 1) (w + 1) l) xs
+counter (!Count c w l) (_:xs)     = counter (Count (c + 1) w l) xs
 
 main :: IO ()
-main = do
-  args <- getArgs
-  handle [] args Nothing
+main = undefined
